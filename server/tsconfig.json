@@ -13,6 +13,6 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "prisma/seed.ts", "prisma.config.ts"],
+  "include": ["src", "scripts"],
   "exclude": ["node_modules", "dist"]
 }

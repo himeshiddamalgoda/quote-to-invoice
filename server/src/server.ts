@@ -1,6 +1,6 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
-import { prisma } from './config/prisma.js';
+import { database } from './config/database.js';
 import { logger } from './config/logger.js';
 const server = createApp().listen(env.PORT, () => logger.info({ port: env.PORT }, 'API listening'));
 let stopping = false;
@@ -14,8 +14,8 @@ function shutdown(signal: string) {
   }, 10_000);
   timeout.unref();
   server.close(() => {
-    void prisma
-      .$disconnect()
+    void database
+      .end()
       .then(() => {
         clearTimeout(timeout);
         process.exit(0);
@@ -29,5 +29,5 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 server.on('error', (error) => {
   logger.fatal({ errorType: error.name }, 'Server failed to start');
-  void prisma.$disconnect().finally(() => process.exit(1));
+  void database.end().finally(() => process.exit(1));
 });

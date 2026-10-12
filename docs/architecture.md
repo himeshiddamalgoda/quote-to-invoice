@@ -30,7 +30,7 @@ Approval services must validate the actor, current state/version, nonempty items
 
 `nextDocumentNumber(tx, kind, year)` uses parameterized MySQL INSERT ON DUPLICATE KEY UPDATE with an atomic increment on a `(kind, year)` primary key. The transaction holds the InnoDB row lock while reading the counter value back. Use it inside the document transaction, never derive a number from row counts. Format: `QT-2026-0001`, `PI-2026-0001`; padding is a minimum width. Choose the year from the document business date. Keep numbers unique, immutable and never recycle committed numbers.
 
-For quotation mutations: read and validate within a transaction, then perform a conditional update using ID, expected status and version, incrementing version. If zero records match, return 409. Approval/PI creation/audit must share that transaction. Use Serializable where coordinating multiple reads, and bounded retries for Prisma P2034 transaction conflicts. The helper itself does not implement a retry policy; services will do so.
+For quotation mutations: read and validate within a transaction, then perform a conditional update using ID, expected status and version, incrementing version. If zero records match, return 409. Approval/PI creation/audit must share that transaction. Use Serializable where coordinating multiple reads, and bounded retries for MySQL ER_LOCK_DEADLOCK / ER_LOCK_WAIT_TIMEOUT transaction conflicts. The helper itself does not implement a retry policy; services will do so.
 
 A unique `sourceQuotationId` enforces one PI per quotation, including cancelled PIs. A second request returns a domain conflict, never a second snapshot. Future replacement/revision rules should be designed explicitly rather than removing this protection silently.
 
@@ -66,7 +66,7 @@ AuditLog records actor, typed action, entity name/ID, timestamp and allowlisted 
 - The in-memory rate limiter works for one process. Use a shared store for multiple replicas. Trust proxy is disabled; configure known trusted proxy addresses/hops before deploying behind a proxy so IP limiting works safely.
 - CORS uses exact configured origins, does not enable credentials, and is not authorization. TLS belongs at the deployment ingress. Do not add wildcard origins or tokens to query strings.
 - Request logs contain generated request ID, method, status and duration, not bodies, query strings, headers, or raw errors. Investigate failures with request IDs and safe telemetry.
-- Prisma connection pool is bounded and has a connection timeout. Readiness probes query the database; liveness does not.
+- MySQL connection pool is bounded and has a connection timeout. Readiness probes query the database; liveness does not.
 - Deployment must apply migrations before serving traffic, inject environment secrets, serve static client assets with SPA fallback, and implement backup/restore procedures.
 
 ## Test boundaries
@@ -75,10 +75,14 @@ Pure calculation/workflow tests exhaust the transition matrix and exercise round
 
 ## Dependency maintenance
 
-The lockfile fixes resolved versions. Server npm overrides select patched deepmerge-ts, mysql2 (transitive Prisma tooling dependencies), and mariadb driver versions to resolve audit advisories. Prisma generation and migrations are checked with these overrides. Reassess and remove overrides when upstream packages adopt patched dependencies; run npm audit and all verification commands when updating.
+Each app has its own lockfile. The server uses mysql2 directly; Prisma packages, engine downloads, code generation, driver adapters and their dependency overrides have been removed. Run npm audit and verification commands when updating dependencies.
 
 ## Local database and independent apps
 
-Client and server are independent npm packages with their own installations, lockfiles and lint tooling. Root npm commands are optional shortcuts; the apps do not require root node_modules. Server compose.yaml runs MySQL 8.4 separately with persistent storage and a healthcheck. Server .env supplies MYSQL_* credentials to both Docker and the API. Prisma CLI and seeding use the same database URL resolver. DATABASE_URL and SHADOW_DATABASE_URL remain optional overrides for external databases; explicit external URLs do not silently use a local shadow database.
+Client and server remain independent npm packages. Server compose.yaml runs MySQL 8.4 separately. Server .env supplies MYSQL_* credentials to Docker, the API, migration runner and seed; DATABASE_URL overrides local connection settings for external servers. No shadow database is required. Existing volumes and credentials are preserved.
 
-The existing Compose project name quote-flow and its volume quote-flow_mysql_data are retained. Moving Compose into server/ does not reset the database. Development uses separate application, shadow and test schemas. These are local development permissions, not production provisioning. Prisma uses @prisma/adapter-mariadb for MySQL ([Prisma documentation](https://www.prisma.io/docs/orm/v7/prisma-client/setup-and-configuration/databases-connections/connection-pool)). MySQL UUID references use CHAR(36) and commercial text uses TEXT. Deployment TLS/pool configuration should be designed for the chosen host.
+Repositories use mysql2 execute() with placeholders. Application connections disable multi-statements; only the isolated migration CLI executes trusted multi-statement SQL files. DECIMAL values remain strings ([mysql2 documentation](https://sidorares.github.io/node-mysql2/docs/documentation)); IDs use Node randomUUID(), and MySQL owns automatic updatedAt updates. Services pass one PoolConnection to repositories inside withTransaction() for atomic operations. Monetary arithmetic still uses decimal.js.
+
+The domain schema lives in database/migrations; application enums are in src/types/domain.ts and the pure quotation workflow. The versioned SQL runner serializes work with a MySQL advisory lock, records checksums and completion, and detects edited or unfinished migrations. SQL newline normalization keeps checksums consistent on Windows and Unix. MySQL DDL cannot be rolled back as a whole, so failed migrations require deliberate review and repair. Do not change an already applied file or erase history to force a retry.
+
+The runner contains a narrow compatibility check for existing completed initial migration records. It verifies their checksum and records a baseline without recreating tables. Old ORM history is kept, not used at runtime. Future schema changes use new timestamped SQL files rather than schema generation. Backup and review destructive SQL before deployment.

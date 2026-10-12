@@ -1,4 +1,4 @@
-import type { Role } from '../generated/prisma/client.js';
+import type { Role } from './domain.js';
 export interface AuthUser {
   id: string;
   role: Role;

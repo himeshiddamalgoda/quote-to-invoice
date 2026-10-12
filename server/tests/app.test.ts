@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-vi.mock('../src/config/prisma.js', () => ({
-  prisma: { $queryRaw: vi.fn(), user: { findUnique: vi.fn() } },
+vi.mock('../src/config/database.js', () => ({
+  database: { execute: vi.fn() },
 }));
 import { createApp } from '../src/app.js';
-import { prisma } from '../src/config/prisma.js';
+import { database } from '../src/config/database.js';
 import { authorize } from '../src/middleware/authorize.js';
 import express from 'express';
 import { errorHandler } from '../src/middleware/error-handler.js';
@@ -18,7 +18,7 @@ describe('HTTP infrastructure (mocked persistence)', () => {
     expect(res.headers['x-request-id']).toBeTruthy();
   });
   it('returns readiness failure without database internals', async () => {
-    vi.mocked(prisma.$queryRaw).mockRejectedValueOnce(new Error('secret'));
+    vi.mocked(database.execute).mockRejectedValueOnce(new Error('secret'));
     const res = await request(app).get('/api/v1/health/ready');
     expect(res.status).toBe(503);
     expect(JSON.stringify(res.body)).not.toContain('secret');

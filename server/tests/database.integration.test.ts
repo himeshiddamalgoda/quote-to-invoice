@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID, randomInt } from 'node:crypto';
 import argon2 from 'argon2';
 import request from 'supertest';
-import { prisma } from '../src/config/prisma.js';
+import { database } from '../src/config/database.js';
+import { withTransaction } from '../src/utils/transaction.js';
+import type { RowDataPacket } from 'mysql2/promise';
+import { userRepository } from '../src/modules/users/user.repository.js';
 import { createApp } from '../src/app.js';
 import { nextDocumentNumber } from '../src/modules/documents/document-number.repository.js';
 
@@ -16,22 +19,17 @@ describe.skipIf(!databaseUrl)('MySQL integration', () => {
   const password = 'integration-only-password';
   const year = randomInt(100_000, 2_000_000_000);
   const app = createApp();
-  let userId: string;
+  const userId = randomUUID();
   beforeAll(async () => {
-    const user = await prisma.user.create({
-      data: {
-        email,
-        name: 'Integration user',
-        role: 'MANAGER',
-        passwordHash: await argon2.hash(password),
-      },
-    });
-    userId = user.id;
+    await database.execute(
+      'INSERT INTO `User` (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)',
+      [userId, email, 'Integration user', 'MANAGER', await argon2.hash(password)],
+    );
   });
   afterAll(async () => {
-    if (userId) await prisma.user.delete({ where: { id: userId } });
-    await prisma.documentSequence.deleteMany({ where: { year } });
-    await prisma.$disconnect();
+    await database.execute('DELETE FROM `User` WHERE id = ?', [userId]);
+    await database.execute('DELETE FROM DocumentSequence WHERE year = ?', [year]);
+    await database.end();
   });
   it('logs in and authenticates a real stored user', async () => {
     const login = await request(app).post('/api/v1/auth/login').send({ email, password });
@@ -44,6 +42,15 @@ describe.skipIf(!databaseUrl)('MySQL integration', () => {
     expect(me.status).toBe(200);
     expect(me.body.data.id).toBe(userId);
   });
+  it('treats SQL-like input as a literal email', async () => {
+    expect(await userRepository.findByEmail("' OR 1=1 --")).toBeNull();
+  });
+  it('retains exact decimal values as strings', async () => {
+    const [rows] = await database.execute<RowDataPacket[]>(
+      'SELECT CAST(0.10 AS DECIMAL(19,2)) AS amount',
+    );
+    expect(rows[0]?.amount).toBe('0.10');
+  });
   it('rejects wrong credentials', async () => {
     expect(
       (await request(app).post('/api/v1/auth/login').send({ email, password: 'incorrect' })).status,
@@ -52,10 +59,10 @@ describe.skipIf(!databaseUrl)('MySQL integration', () => {
   it('checks active status and current roles after issuing a token', async () => {
     const login = await request(app).post('/api/v1/auth/login').send({ email, password });
     const token = login.body.data.accessToken;
-    await prisma.user.update({ where: { id: userId }, data: { role: 'VIEWER' } });
+    await database.execute('UPDATE `User` SET role = ? WHERE id = ?', ['VIEWER', userId]);
     const me = await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${token}`);
     expect(me.body.data.role).toBe('VIEWER');
-    await prisma.user.update({ where: { id: userId }, data: { isActive: false } });
+    await database.execute('UPDATE `User` SET isActive = false WHERE id = ?', [userId]);
     expect(
       (await request(app).get('/api/v1/auth/me').set('Authorization', `Bearer ${token}`)).status,
     ).toBe(401);
@@ -63,7 +70,7 @@ describe.skipIf(!databaseUrl)('MySQL integration', () => {
   it('allocates distinct sequential numbers under concurrent first-use requests', async () => {
     const numbers = await Promise.all(
       Array.from({ length: 8 }, () =>
-        prisma.$transaction((tx) => nextDocumentNumber(tx, 'QT', year)),
+        withTransaction(database, (tx) => nextDocumentNumber(tx, 'QT', year)),
       ),
     );
     expect(new Set(numbers).size).toBe(8);
@@ -73,15 +80,17 @@ describe.skipIf(!databaseUrl)('MySQL integration', () => {
   });
   it('rolls back document numbering with the enclosing transaction', async () => {
     await expect(
-      prisma.$transaction(async (tx) => {
+      withTransaction(database, async (tx) => {
         await nextDocumentNumber(tx, 'PI', year);
         throw new Error('abort');
       }),
     ).rejects.toThrow('abort');
-    expect(
-      await prisma.documentSequence.findUnique({ where: { kind_year: { kind: 'PI', year } } }),
-    ).toBeNull();
-    expect(await prisma.$transaction((tx) => nextDocumentNumber(tx, 'PI', year))).toBe(
+    const [rows] = await database.execute<RowDataPacket[]>(
+      'SELECT value FROM DocumentSequence WHERE kind = ? AND year = ?',
+      ['PI', year],
+    );
+    expect(rows).toHaveLength(0);
+    expect(await withTransaction(database, (tx) => nextDocumentNumber(tx, 'PI', year))).toBe(
       `PI-${year}-0001`,
     );
   });

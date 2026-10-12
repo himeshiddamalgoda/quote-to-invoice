@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { rateLimit } from 'express-rate-limit';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
-import { prisma } from './config/prisma.js';
+import { database } from './config/database.js';
 import { AppError } from './utils/app-error.js';
 import { errorHandler, notFound } from './middleware/error-handler.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -45,7 +45,7 @@ export function createApp() {
   app.get('/api/v1/health', (_req, res) => res.json({ data: { status: 'ok' } }));
   app.get('/api/v1/health/ready', async (_req, res) => {
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await database.execute('SELECT 1');
     } catch {
       throw new AppError(503, 'NOT_READY', 'Database is unavailable.');
     }

@@ -44,7 +44,7 @@ npm.cmd run setup
 npm.cmd run dev
 ```
 
-The example passwords are for local development. setup starts MySQL, generates Prisma, applies migrations, and seeds the administrator. MySQL's first image download may take several minutes. Keep this terminal open.
+The example passwords are for local development. setup starts MySQL, applies SQL migrations, and seeds the administrator. No Prisma binaries are downloaded. MySQL's first image download may take several minutes. Keep this terminal open.
 
 ## First-time client setup
 

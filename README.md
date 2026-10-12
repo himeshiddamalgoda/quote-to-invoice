@@ -25,7 +25,7 @@ Proforma Invoice
 - Frontend routing with lazy pages, shared layout, accessible login form, API error handling, and TanStack Query.
 - Backend environment validation, Helmet, explicit CORS allowlist, request limits, rate limits, request IDs, structured logging, graceful shutdown, and centralized errors.
 - Argon2id login, 15-minute JWT access tokens, authenticated identity endpoint, and reusable backend role guards. No public registration or refresh sessions yet.
-- MySQL/Prisma domain schema and initial migration, explicit administrator seed, atomic document numbering helper, decimal calculations, and pure workflow guards.
+- MySQL/SQL domain schema and initial migration, explicit administrator seed, atomic document numbering helper, decimal calculations, and pure workflow guards.
 - Unit tests and HTTP infrastructure tests using mocked persistence. Optional real MySQL tests cover login, current role/active checks, concurrent numbering and transaction rollback.
 
 Customers, products, quotation CRUD/actions, approval persistence, and PI generation endpoints are **not implemented**. The UI exposes an overview and login only. The schema and pure rules prepare these modules without pretending the workflow is operational.
@@ -40,13 +40,13 @@ MySQL belongs to `server/`: its compose.yaml, initialization SQL and all databas
 
 Frontend: React, Vite, TypeScript, React Router, TanStack Query, React Hook Form, Zod, Axios. Server state belongs in Query, forms in React Hook Form, and local UI state in React. A small auth context holds the session user; no Redux is needed.
 
-Backend: Node.js, Express 5, TypeScript, MySQL, Prisma 7 with its MySQL-compatible driver adapter, Zod, JWT, Argon2id, Pino, decimal.js.
+Backend: Node.js, Express 5, TypeScript, MySQL, mysql2 with prepared statements, Zod, JWT, Argon2id, Pino, decimal.js.
 
 ```text
-Route → Middleware → Controller → Service → Repository → Prisma → MySQL
+Route → Middleware → Controller → Service → Repository → mysql2 → MySQL
 ```
 
-Controllers deal with HTTP and validated inputs, services enforce business rules and transaction boundaries, and repositories encapsulate persistence. Auth is the working vertical slice. Pure quotation rules are independent of Express/database setup. No shared package is introduced yet; Prisma owns persisted enums and API contracts will be defined alongside their endpoints.
+Controllers deal with HTTP and validated inputs, services enforce business rules and transaction boundaries, and repositories encapsulate persistence. Auth is the working vertical slice. Pure quotation rules are independent of Express/database setup. No shared package is introduced yet; SQL migrations define persisted enums; server/src/types/domain.ts owns application enums and API contracts will be defined alongside their endpoints.
 
 ```text
 .
@@ -64,7 +64,7 @@ Controllers deal with HTTP and validated inputs, services enforce business rules
 │   └── .env.example
 ├── server/
 │   ├── src/
-│   │   ├── config/              # Validated env, logging, Prisma
+│   │   ├── config/              # Validated env, logging, MySQL pool
 │   │   ├── middleware/          # Validation, auth, roles, errors
 │   │   ├── modules/
 │   │   │   ├── auth/            # Routes → controller → service
@@ -75,11 +75,11 @@ Controllers deal with HTTP and validated inputs, services enforce business rules
 │   │   ├── utils/               # Application errors, pagination
 │   │   ├── app.ts               # Testable app factory
 │   │   └── server.ts            # Listener and lifecycle
-│   ├── prisma/                  # Schema, migrations, seed
+│   ├── database/migrations/     # Versioned SQL schema
+│   ├── scripts/                 # Node migration runner and admin seed
 │   ├── compose.yaml             # Local MySQL service
-│   ├── docker/mysql/init.sql    # Shadow and test schemas
+│   ├── docker/mysql/init.sql    # Test database
 │   ├── package-lock.json
-│   ├── prisma.config.ts
 │   ├── tests/
 │   └── .env.example
 ├── docs/architecture.md
@@ -136,7 +136,7 @@ npm run setup
 npm run dev
 ```
 
-`setup` starts MySQL, generates Prisma Client, applies committed migrations and seeds the admin. Existing accounts are not changed by seeding. It is safe to rerun setup. MySQL data persists in a named volume. The database is a separate service; it does not depend on the React app or API process staying open.
+`setup` starts MySQL, applies SQL migrations and seeds the admin. Existing accounts are not changed by seeding. It is safe to rerun setup. MySQL data persists in a named volume. The database is a separate service; it does not depend on the React app or API process staying open.
 
 ### Frontend — terminal 2
 
@@ -181,18 +181,21 @@ Press Ctrl+C to stop either app. From server/, `npm run db:down` stops MySQL and
 
 ## Database configuration
 
-Compose creates quote_flow, quote_flow_shadow and quote_flow_test on first initialization. The app reads local MySQL credentials from server/.env; Prisma derives its shadow connection automatically. MYSQL_PORT controls both the Docker host port and API connection, so changing it in one place is enough.
+Compose creates quote_flow and quote_flow_test on first initialization. The application, migration runner and seed read local MySQL credentials from server/.env. MYSQL_PORT controls both Docker's host port and the API connection. No Prisma installation, engine download or shadow database is required.
 
-For an existing external MySQL server, skip db:up and setup, set DATABASE_URL in server/.env, then run db:generate, db:deploy, and db:seed. For new development migrations on an external server, also configure SHADOW_DATABASE_URL. The explicit URL takes precedence over local MYSQL_* configuration. Initialization scripts and Docker password changes apply only to a fresh volume; changing a password in .env alone does not change an existing database account.
+For an external MySQL server, skip db:up, set DATABASE_URL, then run db:migrate and db:seed. The URL takes precedence over local MYSQL_* settings. Changing a Docker password in .env does not change an existing account's password.
 
 From server/:
 
 ```sh
-npm run db:migrate -- --name descriptive_change  # create development migrations
-npm run db:deploy                               # apply committed migrations
+npm run db:migrate   # apply pending versioned SQL files
+npm run db:deploy   # same runner; suitable for deploying committed SQL
+npm run db:seed      # provision the admin without changing existing accounts
 ```
 
-Use db:deploy in production, never migrate dev or db push. The initial migration is for MySQL; it does not convert an existing PostgreSQL database.
+To change the schema, add a new `YYYYMMDDHHMMSS_description.sql` file under database/migrations and run db:migrate. Applied SQL files are immutable. The runner uses checksums, a database lock and _schema_migrations history. MySQL DDL auto-commits; an unfinished migration blocks retries and must be reviewed/repaired rather than blindly rerun. No migration reset/drop command is provided.
+
+An existing database initialized by the previous implementation is preserved: the runner verifies its completed initial migration checksum before recording the baseline. Existing _prisma_migrations history and old shadow databases may remain for traceability, but are unused by the application. Unknown/partially initialized schemas are not silently adopted. The initial SQL plus the follow-up timestamp migration define all domain tables; UUIDs are generated in Node, and updatedAt columns update automatically in MySQL.
 
 ## Verify and build
 
@@ -229,7 +232,7 @@ Implemented endpoints:
 | POST   | `/auth/login`   | Validated email/password → access token and safe user data |
 | GET    | `/auth/me`      | Current authenticated user ID and role                     |
 
-Success: `{ "data": ... }`. Future lists add `meta: { page, pageSize, total }`. Errors: `{ "error": { "code", "message", "details"? }, "requestId" }`; rate-limiter responses use the same error object and an `X-Request-Id` header. Error details contain safe validation issues only. Responses never expose stacks, hashes, SQL, or raw Prisma failures.
+Success: `{ "data": ... }`. Future lists add `meta: { page, pageSize, total }`. Errors: `{ "error": { "code", "message", "details"? }, "requestId" }`; rate-limiter responses use the same error object and an `X-Request-Id` header. Error details contain safe validation issues only. Responses never expose stacks, hashes, SQL, or raw database failures.
 
 HTTP conventions: 200 read/update/action, 201 creation, 400 malformed JSON, 401 unauthenticated, 403 forbidden, 404 missing, 409 conflict/invalid transition, 413 oversized body, 422 invalid input, 429 rate limit, 500 unexpected failure, 503 readiness failure.
 

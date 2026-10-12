@@ -1,16 +1,23 @@
-import type { Prisma, DocumentKind } from '../../generated/prisma/client.js';
-// Must run inside the SAME transaction as the document insert and audit write.
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import type { DocumentKind } from '../../types/domain.js';
+interface SequenceRow extends RowDataPacket {
+  value: number;
+}
+// Use only inside withTransaction(), together with document creation and its audit entry.
 export async function nextDocumentNumber(
-  tx: Prisma.TransactionClient,
+  connection: PoolConnection,
   kind: DocumentKind,
   year: number,
 ): Promise<string> {
-  // InnoDB's upsert takes a row lock held until commit, including concurrent first use.
-  await tx.$executeRaw`
-    INSERT INTO DocumentSequence (kind, year, value) VALUES (${kind}, ${year}, 1)
-    ON DUPLICATE KEY UPDATE value = value + 1
-  `;
-  // The transaction still holds the lock, so another allocator cannot change this value.
-  const row = await tx.documentSequence.findUniqueOrThrow({ where: { kind_year: { kind, year } } });
+  await connection.execute(
+    'INSERT INTO DocumentSequence (kind, year, value) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE value = value + 1',
+    [kind, year],
+  );
+  const [rows] = await connection.execute<SequenceRow[]>(
+    'SELECT value FROM DocumentSequence WHERE kind = ? AND year = ?',
+    [kind, year],
+  );
+  const row = rows[0];
+  if (!row) throw new Error('Document counter is unavailable');
   return `${kind}-${year}-${String(row.value).padStart(4, '0')}`;
 }
