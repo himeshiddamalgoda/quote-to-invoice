@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { z } from 'zod';
 import argon2 from 'argon2';
+import { databaseConfig } from '../src/config/database-url.js';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 import { createDatabaseAdapter } from '../src/config/database-adapter.js';
 const result = z
@@ -9,7 +10,7 @@ const result = z
     SEED_ADMIN_EMAIL: z.email(),
     SEED_ADMIN_PASSWORD: z.string().min(12).max(1024),
   })
-  .safeParse(process.env);
+  .safeParse({ ...process.env, DATABASE_URL: databaseConfig().url });
 if (!result.success)
   throw new Error(
     `Invalid seed variables: ${result.error.issues.map((issue) => issue.path.join('.')).join(', ')}`,

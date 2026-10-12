@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { databaseConfig } from './database-url.js';
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -14,7 +15,7 @@ const schema = z.object({
   JWT_AUDIENCE: z.string().min(1).default('quote-flow-client'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
-const result = schema.safeParse(process.env);
+const result = schema.safeParse({ ...process.env, DATABASE_URL: databaseConfig().url });
 if (!result.success) {
   // Report variable names, never the supplied values.
   throw new Error(

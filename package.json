@@ -2,44 +2,15 @@
   "name": "quote-flow",
   "private": true,
   "version": "0.1.0",
-  "workspaces": [
-    "client",
-    "server"
-  ],
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "concurrently -k -n client,server \"npm run dev -w client\" \"npm run dev -w server\"",
-    "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "test": "npm run test -w server",
-    "db:generate": "npm run db:generate -w server",
-    "db:migrate": "npm run db:migrate -w server",
-    "db:deploy": "npm run db:deploy -w server",
-    "db:seed": "npm run db:seed -w server",
-    "db:up": "docker compose up -d --wait",
-    "db:down": "docker compose down",
-    "db:logs": "docker compose logs -f mysql"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.0",
-    "concurrently": "^9.2.0",
-    "eslint": "^10.12.0",
-    "eslint-config-prettier": "^10.1.0",
-    "eslint-plugin-react-hooks": "^7.0.0",
-    "eslint-plugin-react-refresh": "^0.5.0",
-    "globals": "^16.5.0",
-    "prettier": "^3.6.0",
-    "typescript-eslint": "^8.46.0"
-  },
-  "overrides": {
-    "deepmerge-ts": "^8.0.2",
-    "mysql2": "^3.24.5",
-    "shell-quote": "^1.11.0",
-    "mariadb": "^3.4.6"
+    "build": "npm --prefix client run build && npm --prefix server run build",
+    "typecheck": "npm --prefix client run typecheck && npm --prefix server run typecheck",
+    "lint": "npm --prefix client run lint && npm --prefix server run lint",
+    "test": "npm --prefix server test",
+    "format": "npm --prefix client run format && npm --prefix server run format",
+    "format:check": "npm --prefix client run format:check && npm --prefix server run format:check"
   }
 }
