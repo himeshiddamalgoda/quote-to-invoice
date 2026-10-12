@@ -97,6 +97,8 @@ Add customers, products, approvals and proforma-invoices feature/module folders 
 
 ## First-time setup
 
+For Windows PowerShell commands, see [Windows setup](docs/windows-setup.md).
+
 Open two terminals from the cloned project. Examples contain variable names only; replace them with the values below rather than leaving blank optional settings.
 
 ### Server and database — terminal 1
